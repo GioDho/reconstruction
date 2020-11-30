@@ -1,0 +1,7 @@
+{
+'min_length' : 200, # pixels
+'min_npix_intercept': 5,
+'min_samples_ransac':  4,
+'residual_threshold_ransac': 1,
+'max_trials_ransac': 1000,
+}

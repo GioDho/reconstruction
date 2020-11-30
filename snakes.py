@@ -21,7 +21,7 @@ from iDBSCAN import iDBSCAN
 import debug_code.tools_lib as tl
 
 class SnakesFactory:
-    def __init__(self,img,img_fr,img_fr_zs,img_ori,name,options,geometry):
+    def __init__(self,img,img_fr,img_fr_zs,img_ori,vignette,name,options,geometry):
         self.name = name
         self.options = options
         self.rebin = options.rebin
@@ -35,6 +35,7 @@ class SnakesFactory:
                 self.imagelog[x,y] = math.log(value)
         self.image_fr    = img_fr
         self.image_fr_zs = img_fr_zs
+        self.vignette = vignette
         self.contours = []
         
     def store_evolution_in(self,lst):
@@ -102,8 +103,9 @@ class SnakesFactory:
         #-----Pre-Processing----------------#
         rescale=int(self.geometry.npixx/self.rebin)
         rebin_image     = tl.rebin(self.img_ori, (rescale, rescale))
-
-        edges = median_filter(self.image, size=4)
+        rebin_vignette  = tl.rebin(self.vignette,(rescale, rescale)) if self.options.vignetteCorr else np.ones(rescale, rescale)
+        
+        edges = median_filter(self.image, size=6)
         edcopy = edges.copy()
         edcopyTight = tl.noisereductor(edcopy,rescale,self.options.min_neighbors_average)
 
@@ -116,7 +118,8 @@ class SnakesFactory:
             Xl = [(ix,iy) for ix,iy in points]          # Aux variable to simulate the Z-dimension
             X1 = np.array(Xl).copy()                    # variable to keep the 2D coordinates
             for ix,iy in points:                        # Looping over the non-empty coordinates
-                nreplicas = int(self.image[ix,iy])-1
+                cut_vignette = min(rebin_vignette[ix,iy],2) # don't reduce the seeding threshold more than 1/2
+                nreplicas = max(int(self.image[ix,iy]/cut_vignette)-1,0) # divide by the vignette correction the pixel to equivalently increase the "seeding threshold" of the cluster
                 for count in range(nreplicas):                                # Looping over the number of 'photons' in that coordinate
                     Xl.append((ix,iy))                              # add a coordinate repeatedly 
             X = np.array(Xl)                                        # Convert the list to an array
@@ -595,7 +598,8 @@ class SnakesProducer:
         self.picture     = sources['picture']     if 'picture' in sources else None
         self.pictureHD   = sources['pictureHD']   if 'pictureHD' in sources else None
         self.picturezsHD = sources['picturezsHD'] if 'picturezsHD' in sources else None
-        self.pictureOri  = sources['pictureOri'] if 'pictureOri' in sources else None
+        self.pictureOri  = sources['pictureOri']  if 'pictureOri' in sources else None
+        self.vignette    = sources['vignette']    if 'vignette' in sources else None
         self.name        = sources['name']        if 'name' in sources else None
         self.algo        = sources['algo']        if 'algo' in sources else 'DBSCAN'
         
@@ -606,6 +610,18 @@ class SnakesProducer:
 
         self.options = options
         self.geometry = geometry
+        geometryPSet   = open('modules_config/geometry_{det}.txt'.format(det=options.geometry),'r')
+        geometryParams = eval(geometryPSet.read())
+
+        self.run_cosmic_killer = self.options.cosmic_killer
+        if self.run_cosmic_killer:
+            from clusterMatcher import ClusterMatcher
+            # cosmic killer parameters
+            cosmicKillerPars = open('modules_config/clusterMatcher.txt','r')
+            killer_params = eval(cosmicKillerPars.read())
+            killer_params.update(geometryParams)
+            self.cosmic_killer = ClusterMatcher(killer_params)
+
         
     def run(self):
         ret = []
@@ -615,7 +631,7 @@ class SnakesProducer:
         t0 = time.perf_counter()
         
         # Cluster reconstruction on 2D picture
-        snfac = SnakesFactory(self.picture,self.pictureHD,self.picturezsHD,self.pictureOri,self.name,self.options,self.geometry)
+        snfac = SnakesFactory(self.picture,self.pictureHD,self.picturezsHD,self.pictureOri,self.vignette,self.name,self.options,self.geometry)
 
         # this plotting is only the pyplot representation.
         # Doesn't work on MacOS with multithreading for some reason... 
@@ -631,7 +647,13 @@ class SnakesProducer:
         # print "Get light profiles..."
         snfac.calcProfiles(snakes,plot=self.plotpy)
         snfac.calcProfiles(clusters,plot=False)
-        
+
+        # run the cosmic killer: it makes sense only on superclusters
+        if self.run_cosmic_killer:
+            for ik,killerCand in enumerate(snakes):
+                targets = [snakes[it] for it in range(len(snakes)) if it!=ik]
+                self.cosmic_killer.matchClusters(killerCand,targets)
+
         # snfac.calcProfiles(snakes) # this is for BTF
         
         # sort snakes by light integral

@@ -1,25 +1,15 @@
 #!/bin/env python
-
-PYTHON3_DIR = '/nfs/cygno/software/python3.8'
-PYTHON3     = PYTHON3_DIR+'/pyenv/bin/python3.8'
-PYTHON_PATH = '{pdir}/env/lib/python3.8/site-packages:{pdir}/env/lib/python3.8/site-packages-pipinstalled'.format(pdir=PYTHON3_DIR)
+# USAGE: python3.8 scripts/submit_batch.py $PWD "[3792-3796]" --outdir cosmics_1stset_261120 --dry-run
+# remove --dry-run to submit for real (otherwise only the scripts are created and commands are printed)
 
 jobstring  = '''#!/bin/bash
 ulimit -c 0 -S
 ulimit -c 0 -H
 set -e
-export CYGNO_BASE="CYGNOBASE"
-cd $CYGNO_BASE
-echo "Entering the CYGNO virtual environment software..."
-export PATH="{pdir}/pyenv/bin:$PATH"
-export LD_LIBRARY_PATH="{pdir}/pyenv/lib:$LD_LIBRARY_PATH"
-echo "Setting up ROOT..."
-export PYTHONPATH="{ppath}"
-. /nfs/cygno/software/root-v6-22-00-py36-build/bin/thisroot.sh 
-alias python="python3.8"
-echo "DONE."
+cd CYGNOBASE
+source scripts/activate_cygno_lngs.sh
 RECOSTRING
-'''.format(pdir=PYTHON3_DIR,ppath=PYTHON_PATH)
+'''
 
 import os, sys, re
 
@@ -27,8 +17,10 @@ if __name__ == "__main__":
     
     from optparse import OptionParser
     parser = OptionParser(usage='%prog workdir runs [options] ')
-    parser.add_option(        '--dry-run'       , dest='dryRun'        , action='store_true', default=False, help='Do not run the job, only print the command');
-    parser.add_option(        '--outdir', dest='outdir', type="string", default=None, help='outdirectory');
+    parser.add_option(        '--dry-run',  dest='dryRun',   action='store_true', default=False, help='Do not run the job, only print the command');
+    parser.add_option(        '--outdir',   dest='outdir',   type="string", default=None, help='outdirectory');
+    parser.add_option(        '--nthreads', dest='nthreads', type="string", default=24, help='number of threads / job');
+    parser.add_option('-q',   '--queue',    dest='queue',    type="string", default='cygno-custom', help='queue to be used for the jobs');
     (options, args) = parser.parse_args()
 
     if len(args)<2:
@@ -39,6 +31,7 @@ if __name__ == "__main__":
     if not os.path.isdir(abswpath):
         raise RuntimeError('ERROR: {p} is not a valid directory. This is the base dir where the jobs run'.format(p=abswpath))
 
+    nThreads = int(options.nthreads)
     runr = args[1]
     p = re.compile('\[(\d+)-(\d+)\]')
     m = p.match(runr)
@@ -70,6 +63,11 @@ if __name__ == "__main__":
     if not os.path.isdir(logdir):
         os.system('mkdir {od}'.format(od=logdir))
 
+    # typically for LIME images (~4MP) MEM = 600MB. 1GB for safety
+    if options.queue!='cygno-custom':
+        nThreads = min(8,nThreads)
+    RAM = nThreads*1000
+    ssdcache_opt = 'nodes=1:disk10,' if options.queue=='cygno-custom' else ''
     commands = []
     for run in runs:
         job_file_name = jobdir+'/job_run{r}.sh'.format(r=run)
@@ -77,13 +75,13 @@ if __name__ == "__main__":
         tmp_file = open(job_file_name, 'w')
 
         tmp_filecont = jobstring
-        cmd = '{py3} reconstruction.py configFileNeutrons7030.txt -r {r}'.format(py3=PYTHON3,r=run)
+        cmd = 'python3.8 reconstruction.py configFile.txt -r {r} -j {nt} '.format(r=run,nt=nThreads)
         tmp_filecont = tmp_filecont.replace('RECOSTRING',cmd)
         tmp_filecont = tmp_filecont.replace('CYGNOBASE',abswpath+'/')
         tmp_file.write(tmp_filecont)
         tmp_file.close()
         
-        sub_cmd = 'qsub -q cygno -d {dpath} -e localhost:{logf} -o localhost:{logf} -v LD_LIBRARY_PATH="{pdir}/pyenv/lib:$LD_LIBRARY_PATH",PYTHONPATH="{ppath}",PATH="{pdir}/pyenv/bin:$PATH" -l mem=8000mb,ncpus=8 {jobf}'.format(dpath=abswpath,logf=log_file_name,jobf=job_file_name,pdir=PYTHON3_DIR,ppath=PYTHON_PATH)
+        sub_cmd = 'qsub -q {queue} -l {ssd}ncpus={nt},mem={ram}mb -d {dpath} -e localhost:{logf} -o localhost:{logf} {jobf}'.format(dpath=abswpath,logf=log_file_name,jobf=job_file_name,nt=nThreads,ram=RAM,ssd=ssdcache_opt,queue=options.queue)
         commands.append(sub_cmd)
 
     if options.dryRun:

@@ -10,10 +10,15 @@ class cameraGeometry:
     def __init__(self,params):
         self.pixelwidth = params['pixelwidth']
         self.npixx = params['npixx']
+        self.name = params['name']
+        self.vignette = params['vignette']
         
 class cameraTools:
     def __init__(self,geometry):
         self.geometry = geometry
+        # attach to a dict to make it persistent
+        # the matrix is the max size possible, still ok if rebinned (because it is redone from the TH2D when it is readout)
+        self.vignetteMap = { 'lime' : np.zeros((int(self.geometry.npixx),int(self.geometry.npixx))) }
 
     def pedsub(self,img,pedarr):
         return img - pedarr
@@ -66,4 +71,34 @@ class cameraTools:
                 z = th2.GetBinContent(orig_ixb,orig_iyb)
                 th2_rs.SetBinContent(ix+1,iy+1,z)
         return th2_rs
+
+    def loadVignettingMap(self):
+        print ("Loading vignette map from: {vf}...".format(vf=self.geometry.vignette))
+        det = self.geometry.name
+        if det == 'lemon': # not implemented (we were taking the efficienct region within the FC)
+            return self.vignetteMap[det]
+        elif det == 'lime':
+            if not self.vignetteMap[det].any():
+                tf = ROOT.TFile.Open(self.geometry.vignette)
+                hmap = tf.Get('normmap')
+                vignetteMapRebinned = hist2array(hmap)
+                tf.Close()
+                rebinx = int(self.geometry.npixx/vignetteMapRebinned.shape[0])
+                rebiny = int(self.geometry.npixx/vignetteMapRebinned.shape[1])
+                macroPixel = np.zeros((rebinx,rebiny))
+                print ("Macro-pixel of the vignetting map has size = ",macroPixel.shape)
+                for ibx in range(vignetteMapRebinned.shape[0]):
+                    for iby in range(vignetteMapRebinned.shape[1]):
+                        macroPixel[:,:] = 1./vignetteMapRebinned[iby,ibx]
+                        (self.vignetteMap[det])[int(ibx*rebinx):int((ibx+1)*rebinx),int(iby*rebiny):int((iby+1)*rebiny)] = macroPixel
+                return self.vignetteMap[det]
+            else:
+                return self.vignetteMap[det]
+        else:
+            print ('WARNING! Geometry ',det,' not foreseen. Return correction 1')
+            return self.vignetteMap[det]
+
+    def vignette_corr(self,img,vignette):
+        return np.multiply(img,vignette)
+
 

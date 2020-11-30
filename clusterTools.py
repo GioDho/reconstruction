@@ -15,15 +15,21 @@ class Cluster:
         self.rebin = rebin
         self.debug = debug
         self.x = hits[:, 0]; self.y = hits[:, 1]
-        self.hits_fr,self.hits_fr_zs = self.fullResHits(img_fr,img_fr_zs)
+        if img_fr.any() and img_fr_zs.any():
+            self.hits_fr,self.hits_fr_zs = self.fullResHits(img_fr,img_fr_zs)
+        else:
+            print("WARNING! Cluster created without underlying image... Are you using it standalone?")
         self.mean_point = np.array([np.mean(self.x),np.mean(self.y)])
-        self.EVs = self.eigenvectors()
+        self.EVs,self.theta = self.eigenvectors()
         self.widths = {}
         self.profiles = {}
         self.shapes = {}
         geometryPSet   = open('modules_config/geometry_{det}.txt'.format(det=geometry),'r')
         geometryParams = eval(geometryPSet.read())
         self.cg = cameraGeometry(geometryParams)
+        self.minDistKiller = self.cg.npixx
+        self.nMatchKiller = 0
+        self.nMatchKillerWeak = 0
         
     def integral(self):
         if hasattr(self,'hits_fr'):
@@ -109,8 +115,11 @@ class Cluster:
             print("DUMPING rebinned hits in absence of full res ones")
             print(self.hits)
 
-    def dumpToFile(self,filename):
-        if hasattr(self,'hits_fr'):
+    def dumpToFile(self,filename,zero_suppressed=False):
+        if zero_suppressed and hasattr(self,'hits_fr_zs'):
+            print("DUMPING zero-suppressed fullres hits to a numpy file: ",filename)
+            np.save(filename, self.hits_fr_zs)
+        elif hasattr(self,'hits_fr'):
             print("DUMPING fullres hits to a numpy file: ",filename)
             np.save(filename, self.hits_fr)
         else:
@@ -123,7 +132,8 @@ class Cluster:
         eig_values, eig_vecs = np.linalg.eig(covmat)
         indexes = (np.argmax(eig_values),np.argmin(eig_values))
         eig_vec_vals = (eig_vecs[:, indexes[0]], eig_vecs[:, indexes[-1]])
-        return eig_vec_vals
+        theta = np.degrees(np.arctan2(*eig_vecs[:,0][::-1]))
+        return eig_vec_vals,theta
 
     def plotAxes(self,plot):
         def plot_line(center, dir, num_steps=400, step_size=0.5):
@@ -234,7 +244,9 @@ class Cluster:
         # variances along major/minor axis
         self.shapes['longrms'] = cluth2d.ProjectionX().GetRMS()
         self.shapes['latrms'] = cluth2d.ProjectionY().GetRMS()
-
+        # inclination wrt the vertical
+        self.shapes['theta'] = self.theta
+        
         self.shapes['xmean'] = np.average(np.array(self.hits_fr[:,0]),weights=np.array([max(0,z) for z in self.hits_fr[:,2]]) )
         self.shapes['ymean'] = np.average(np.array(self.hits_fr[:,1]),weights=np.array([max(0,z) for z in self.hits_fr[:,2]]) )
         self.shapes['xmin'] = np.min(np.array(self.hits_fr[:,0]))

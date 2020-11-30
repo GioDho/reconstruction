@@ -5,7 +5,7 @@
 # DEBUG plots
 'debug_mode'            : 0,
 
-'ev'                    : 11,
+'ev'                    : 50,
 'nclu'                  : -1,        # -1
 
 # Plots that will be made if debug_mode = 1
@@ -33,12 +33,13 @@
 'numPedEvents'          : -1,
 'pedExclRegion'         : None,
 'rebin'                 : 4,
-'nsigma'                : 2.3,
-'cimax'                 : 200,                     # Upper threshold
+'nsigma'                : 2.2,
+'cimax'                 : 300,                     # Upper threshold
 'justPedestal'          : False,
 'daq'                   : 'midas',                 # DAQ type (btf/h5/midas)
 'type'                  : 'neutrons',              # events type (beam/cosmics/neutrons)
 'tag'                   : 'Data',                  # 'Data' for experimental data or 'MC' for Simulated data
+'vignetteCorr'          : True,                    # apply vignetting correction (correction maps in data/ according to the geometry)         
 
 'excImages'             : [], #list(range(5))+[],             # To exlude some images of the analysis. Always exclude the first 5 which are messy
 'min_neighbors_average' : 3.5,                     # cut on the minimum average energy around a pixel (remove isolated macro-pixels)
@@ -48,13 +49,16 @@
 
 'iterative'             : 4,
 'tip'                   : '3D',
-'vector_eps'            : [1,   3.5,  5.8,  4], #[ 1,   2,  3.2,  5], # [ 3,    6.5,  7,  7.5], # [2.26, 3, 3.5, 4],
-'vector_min_samples'    : [1, 150, 25, 20], #[5, 100, 40, 50] , # [30,  1180,  360, 80],  # [30,  55,  28, 13],
+'vector_eps'            : [1, 3.5,  5.8,  4], #[ 1,   2,  3.2,  5], # [ 3,    6.5,  7,  7.5], # [2.26, 3, 3.5, 4],
+'vector_min_samples'    : [1, 300,  60, 40], #[5, 100, 40, 50] , # [30,  1180,  360, 80],  # [30,  55,  28, 13],
 'cuts'                  : [500, 100],
 'saturation_corr'       : False,
 
 # Superclusters parameters are hardcoded
-'calibrate_clusters'    : False,
+'calibrate_clusters'    : True,
+
+# Run the cosmic killer (linear track extrapolation)
+'cosmic_killer'         : True,
 
 ### PMT waveform reconstruction
 'pmt_mode'              : 0,
