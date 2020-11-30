@@ -193,6 +193,12 @@ class analysis:
                 else:
                     run,event=(int(name.split('_')[1].split('run')[-1].lstrip("0")),int(name.split('_')[-1].split('ev')[-1]))
                 print("Processing Run: ",run,"- Event ",event,"...")
+                
+                testspark=100*self.cg.npixx*self.cg.npixx+9000000
+                if obj.Integral()>testspark:
+                          print("Run ",run,"- Event ",event," has spark, will not be analyzed!")
+                          continue
+                
                 self.outTree.fillBranch("run",run)
                 self.outTree.fillBranch("event",event)
                 self.outTree.fillBranch("pedestal_run", int(self.options.pedrun))
