@@ -38,6 +38,10 @@ def rootlocation(tag,run):
         else:
             print("WARNING: Data taken with another DAQ or not yet uploaded to the cloud")
             exit()
+        
+    elif tag == 'DataMango':
+            sel= 'Data/MAN'
+
     elif tag == 'MC':
         sel = 'Simulation'
         print("WARNING: automatic download for Simulated data not implemented yet")
