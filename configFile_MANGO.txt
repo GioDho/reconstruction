@@ -21,6 +21,7 @@
 'pkl_ext'		: 0,
 
 'camera_mode'            : 1,
+'camera_number'			 : 1,
 
 # Parameters of the plots
 'cmapcolor'             : 'gray',
@@ -31,8 +32,8 @@
 
 'offline'               : False,		#if False it reads the logbook from online, if true it reads the runlog_tag_auto.csv locally
 'rebin'                 : 4,
-'nsigma'                : 1.3,
-'min_neighbors_average' : 0.8,                   # cut on the minimum average energy around a pixel (remove isolated macro-pixels)
+'nsigma'                : 0.7,
+'min_neighbors_average' : 1.2,                   # cut on the minimum average energy around a pixel (remove isolated macro-pixels)
 'cimax'                 : 5000,                    # Upper threshold (keep very high not to kill large signals)
 'justPedestal'          : False,
 'daq'                   : 'midas',                 # DAQ type (btf/h5/midas)
@@ -54,8 +55,8 @@
 'calibrate_clusters'    : False,
 
 ### PMT waveform reconstruction
-'pmt_mode'              : 0,
-'board_pmt_channels'	: [6],	# Board channels used to save PMT.
+'pmt_mode'              : 1,
+'board_pmt_channels'	: [0,1],	# Board channels used to save PMT.
 								# NB: This assumes the PMTs are connected to the same channels in both digitizers.
 
 'threshold'             : 0,			

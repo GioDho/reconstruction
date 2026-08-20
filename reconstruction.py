@@ -67,8 +67,12 @@ class analysis:
                 ctools = cameraTools(self.cg)
                 # then the full resolution one
                 pedrf_fr = uproot.open(self.pedfile_fullres_name)
-                self.pedarr_fr   = pedrf_fr['pedmap'].values().T
-                self.noisearr_fr = pedrf_fr['pedmap'].errors().T
+                self.pedarr_fr = []   
+                for i in range(0,self.options.camera_number):        
+                    self.pedarr_fr.append(pedrf_fr['pedmap_'+str(i)].values().T)
+                self.noisearr_fr = []
+                for i in range(0,self.options.camera_number):        
+                    self.noisearr_fr.append(pedrf_fr['pedmap_'+str(i)].errors().T)
                 if options.vignetteCorr:
                     self.vignmap = ctools.loadVignettingMap()
                 else:
@@ -195,16 +199,6 @@ class analysis:
         self.outputFile.Close()
         
     def getNEvents(self,options):
-        if options.rawdata_tier == 'root':
-            tf = sw.swift_read_root_file(self.tmpname)
-            pics = [k for k in tf.keys() if 'pic' in k]
-            return len(pics)
-        elif options.rawdata_tier == 'h5':
-            tf = sw.swift_read_h5_file(self.tmpname)
-            pics = [k for k in tf.keys() if 'pic' in k]
-            print("n events:", len(pics))
-            return len(pics)
-            
         run,tmpdir,tag = self.tmpname
         mf = sw.swift_download_midas_file(run,tmpdir,tag)     #you download the file here so that in multithread does not confuse if it downloaded or not
         if options.offline==False:
@@ -229,7 +223,8 @@ class analysis:
             for iobj,key in enumerate(keys):
                 name=key
                 if name.startswith('CAM'):
-                    evs += 1
+                    if name == self.options.cambanknames[-1]:
+                        evs += 1
         return evs
 
     def calcPedestal(self,options,alternativeRebin=-1):
@@ -241,149 +236,180 @@ class analysis:
         pedfilename = 'pedestals/pedmap_run%s_rebin%d.root' % (options.pedrun,rebin)
         
         pedfile = ROOT.TFile.Open(pedfilename,'recreate')
-        pedmap = ROOT.TH2D('pedmap','pedmap',nx,0,self.xmax,ny,0,self.ymax)
-        pedmapS = ROOT.TH2D('pedmapsigma','pedmapsigma',nx,0,self.xmax,ny,0,self.ymax)
-
-        pedsum = np.zeros((ny,nx))
-
-        if options.rawdata_tier == 'root' or options.rawdata_tier == 'h5':
-            tmpdir = '{tmpdir}'.format(tmpdir=options.tmpdir if options.tmpdir else "/tmp/")
-            if not sw.checkfiletmp(int(options.pedrun),'root',tmpdir):
-                print ('Downloading file: ' + sw.swift_root_file(options.tag, int(options.pedrun)))
-                pedfilename = sw.swift_download_root_file(sw.swift_root_file(options.tag, int(options.pedrun)),int(options.pedrun),tmpdir)
-            else:
-                pedfilename = sw.swift_download_root_file(sw.swift_root_file(options.tag, int(options.pedrun)),int(options.pedrun),tmp=tmpdir,justName=True)                
-            tf = sw.swift_read_root_file(pedfilename)
-            keys = tf.keys()
-            mf = [0] # dummy array to make a common loop with MIDAS case
-        else:
-            sigrun,tmpdir,tag = self.tmpname
-            mf = sw.swift_download_midas_file(options.pedrun,tmpdir,tag)
-            #mf = self.tmpname
+        pedmap = []
+        pedmapS = []
+        pedsum = []
+        for i in range(0,self.options.camera_number):
+            pedmap.append(ROOT.TH2D('pedmap_'+str(i),'pedmap_'+str(i),nx,0,self.xmax,ny,0,self.ymax))
+            pedmapS.append(ROOT.TH2D('pedmapsigma_'+str(i),'pedmapsigma_'+str(i),nx,0,self.xmax,ny,0,self.ymax))
+            pedsum.append(np.zeros((ny,nx)))
+       
+        sigrun,tmpdir,tag = self.tmpname
+        mf = sw.swift_download_midas_file(options.pedrun,tmpdir,tag)
 
         # first calculate the mean 
         numev = 0
-        if  options.rawdata_tier == 'midas':
-            mf.jump_to_start()
-            for mevent in mf:
-                if mevent.header.is_midas_internal_event():
-                    continue
-                else:
-                    keys = mevent.banks.keys()
-                for iobj,key in enumerate(keys):
-                    name=key
+        new_event = False
+
+        morecam = False
+        fewercam = False
+        firstround = True
+        seenCAM0 = False
+        countCAM = 0
+        exitloop = False
+
+        mf.jump_to_start()
+        for mevent in mf:
+            if mevent.header.is_midas_internal_event():
+                continue
+            elif exitloop:
+                exitloop = False
+                break
+            else:
+                keys = mevent.banks.keys()
+                #print(keys)
+            for iobj,key in enumerate(keys):
+                name=key
+                #print('name',name)
+                if firstround:
                     if name.startswith('CAM'):
-                        justSkip=False
-                        if (numev in self.options.excImages) and self.options.justPedestal: justSkip=True
-                        if (maxImages>-1 and numev>min(len(keys),maxImages)) and self.options.justPedestal: break
-                        if numev>250: break # no need to compute pedestals with >250 evts
-                            
-                        if numev%20 == 0:
-                            print("Calc pedestal mean with event: ",numev)
-                        numev += 1
-                        if justSkip:
-                            continue
-                        arr,_,_ = cy.daq_cam2array(mevent.banks[key])
-                        if rebin>1:
-                            ctools.arrrebin(arr,rebin)
-                        pedsum = np.add(pedsum,arr)
-        else:
-            #print ("keys = ",keys)
-            for i,name in enumerate(keys):
-                if 'pic' in name:
-                    patt = re.compile('\S+run(\d+)_ev(\d+)')
-                    m = patt.match(name)
-                    run = int(m.group(1))
-                    event = int(m.group(2))
-                    justSkip=False
-                    if (numev in self.options.excImages) and self.options.justPedestal: justSkip=True
-                    if (maxImages>-1 and numev>min(len(keys),maxImages)) and self.options.justPedestal: break
-                    if numev>250: break # no need to compute pedestals with >250 evts
+                        countCAM+=1
+                        if name == self.options.cambanknames[0]:
+                            if not seenCAM0:
+                                seenCAM0 = True
+                            else:
+                                if countCAM-1 > self.options.camera_number:
+                                    morecam = True
+                                elif countCAM-1 < self.options.camera_number:
+                                    fewercam = True
+                                firstround = False
+                    if morecam:
+                        print("Careful!\nThere are more cameras (%d) than foreseen, but you are analysing less for the pedestal!\n "%(countCAM-1))
+                    if fewercam:
+                        print("Careful!\n There are less cameras (%d) than foreseen. Check again.\nAnalysis FAILED!\n"%(countCAM-1))
+                        sys.exit(1)
 
-                    if event%20 == 0:
-                        print("Calc pedestal mean with event: ",event)
-                    numev += 1
-                    if justSkip:
-                        continue
-                    arr = utilities.rootflip(tf,name,options.tag)                    #necessary to uniform root raw data to midas. This is a vertical flip (raw data differ between ROOT and MIDAS formats)
-                    pedsum = np.add(pedsum,arr)
+                if name.startswith('CAM'):
+                    for ibank,bankname in enumerate(self.options.cambanknames):
+                        if name == bankname:
+                            if name == self.options.cambanknames[-1]:
+                                new_event = True
+                            justSkip=False
+                            if (numev in self.options.excImages) and self.options.justPedestal: justSkip=True
+                            if (maxImages>-1 and numev>min(len(keys),maxImages)) and self.options.justPedestal: 
+                                exitloop = True
+                                break
+                            if numev>250:
+                                exitloop = True
+                                break # no need to compute pedestals with >250 evts
+                                
+                            if numev%20 == 0:
+                                print("Calc pedestal cam %d mean with event: %d "%(ibank,numev))
+                            if new_event:
+                                numev += 1
+                                new_event = False
+                            if justSkip:
+                                continue
+                            arr,_,_ = cy.daq_cam2array(mevent.banks[key])
+                            if rebin>1:
+                                ctools.arrrebin(arr,rebin)
+                            pedsum[ibank] = np.add(pedsum[ibank],arr)
+                            break
+        
+        pedmean = []
+        for i in range(0,self.options.camera_number):
+            pedmean.append(pedsum[i] / float(numev))
 
-        pedmean = pedsum / float(numev)
+        del pedsum
 
         # now compute the rms (two separate loops is faster than one, yes)
-        pedsqdiff = np.zeros((ny,nx))
+        pedsqdiff = []
+        for i in range(0,self.options.camera_number):
+            pedsqdiff.append(np.zeros((ny,nx)))
         numev = 0
-        if  options.rawdata_tier == 'midas':
-            mf.jump_to_start()
-            for mevent in mf:
-                if mevent.header.is_midas_internal_event():
-                    continue
-                else:
-                    keys = mevent.banks.keys()
-                for iobj,key in enumerate(keys):
-                    name=key
-                    if name.startswith('CAM'):
-                        justSkip=False
-                        if (numev in self.options.excImages) and self.options.justPedestal: justSkip=True
-                        if (maxImages>-1 and numev>min(len(keys),maxImages)) and self.options.justPedestal: break
-                        if numev>250: break # no need to compute pedestals with >250 evts 
-             
-                        if numev%20 == 0:
-                            print("Calc pedestal rms with event: ",numev)
-                        numev += 1
-                        if justSkip:
-                             continue
 
-                        arr,_,_ = cy.daq_cam2array(mevent.banks[key])
-                        if rebin>1:
-                            ctools.arrrebin(arr,rebin)
-                        pedsqdiff = np.add(pedsqdiff, np.square(np.add(arr,-1*pedmean)))
-        else:
-            for i,name in enumerate(keys):
-                if 'pic' in name:
-                    patt = re.compile('\S+run(\d+)_ev(\d+)')
-                    m = patt.match(name)
-                    run = int(m.group(1))
-                    event = int(m.group(2))
-                    justSkip=False
-                    if (numev in self.options.excImages) and self.options.justPedestal: justSkip=True
-                    if (maxImages>-1 and numev>min(len(keys),maxImages)) and self.options.justPedestal: break
-                    if numev>250: break # no need to compute pedestals with >250 evts
-                    if justSkip:
-                     continue
+        mf.jump_to_start()
+        for mevent in mf:
+            if mevent.header.is_midas_internal_event():
+                continue
+            elif exitloop:
+                exitloop = False
+                break
+            else:
+                keys = mevent.banks.keys()
+            for iobj,key in enumerate(keys):
+                name=key
+                if name.startswith('CAM'):
+                    for ibank,bankname in enumerate(self.options.cambanknames):
+                        if name == bankname:
+                            if name == self.options.cambanknames[-1]:
+                                new_event = True
+                            justSkip=False
+                            if (numev in self.options.excImages) and self.options.justPedestal: justSkip=True
+                            if (maxImages>-1 and numev>min(len(keys),maxImages)) and self.options.justPedestal:
+                                exitloop = True
+                                break
+                            if numev>250: 
+                                exitloop = True
+                                break # no need to compute pedestals with >250 evts
+                                
+                            if numev%20 == 0:
+                                print("Calc pedestal cam %d rms with event: %d "%(ibank,numev))
+                            if new_event:
+                                numev += 1
+                                new_event = False
+                            if justSkip:
+                                continue
+                            arr,_,_ = cy.daq_cam2array(mevent.banks[key])
+                            if rebin>1:
+                                ctools.arrrebin(arr,rebin)
+                            pedsqdiff[ibank] = np.add(pedsqdiff[ibank], np.square(np.add(arr,-1*pedmean[ibank])))
+                            break
+        
+        pedrms = []
+        for i in range(0,self.options.camera_number):        
+            pedrms.append(np.sqrt(pedsqdiff[i]/float(numev-1)))
 
-                    if event%20 == 0:
-                        print("Calc pedestal rms with event: ",event)
-                    numev += 1
-                    arr = utilities.rootflip(tf,name,options.tag)                     #see cycle above on pedmean
-                    pedsqdiff = np.add(pedsqdiff, np.square(np.add(arr,-1*pedmean)))
-                
-        pedrms = np.sqrt(pedsqdiff/float(numev-1))
+        del pedsqdiff
 
         # now save in a persistent ROOT object
         # the inversion of x and y from array to histogram is correct: [row][columns] to x,y
-        for iy in range(ny):
-            for ix in range(nx):
-                pedmap.SetBinContent(ix+1,iy+1,pedmean[iy,ix]);
-                pedmap.SetBinError(ix+1,iy+1,pedrms[iy,ix]);
-                pedmapS.SetBinContent(ix+1,iy+1,pedrms[iy,ix]);
-
-        pedfile.cd()
-        pedmap.Write()
-        pedmapS.Write()
-        if self.cg.cameratype == 'Quest':
-            pedmean1D = ROOT.TH1D('pedmean','pedestal mean',500,195,220)
-        else:    
-            pedmean1D = ROOT.TH1D('pedmean','pedestal mean',500,97,103)
-        pedrms1D = ROOT.TH1D('pedrms','pedestal RMS',1000,0,15)
-        for ix in range(nx):
+        for i in range(0,self.options.camera_number):     
             for iy in range(ny):
-               pedmean1D.Fill(pedmap.GetBinContent(ix,iy)) 
-               pedrms1D.Fill(pedmap.GetBinError(ix,iy)) 
-        pedmean1D.Write()
-        pedrms1D.Write()
+                for ix in range(nx):
+                    pedmap[i].SetBinContent(ix+1,iy+1,pedmean[i][iy,ix]);
+                    pedmap[i].SetBinError(ix+1,iy+1,pedrms[i][iy,ix]);
+                    pedmapS[i].SetBinContent(ix+1,iy+1,pedrms[i][iy,ix]);
+
+            pedfile.cd()
+            pedmap[i].Write()
+            pedmapS[i].Write()
+        
+        del pedrms,pedmean
+        
+        pedmean1D = []
+        pedrms1D = []
+        if self.cg.cameratype == 'Quest':
+            for i in range(0,self.options.camera_number):        
+                pedmean1D.append(ROOT.TH1D('pedmean_'+str(i),'pedestal mean',500,195,220))
+        else:    
+            for i in range(0,self.options.camera_number):        
+                pedmean1D.append(ROOT.TH1D('pedmean_'+str(i),'pedestal mean',500,97,103))
+        for i in range(0,self.options.camera_number):        
+            pedrms1D.append(ROOT.TH1D('pedrms_'+str(i),'pedestal RMS',1000,0,15))
+
+        for i in range(0,self.options.camera_number):  
+            for ix in range(nx):
+                for iy in range(ny):
+                    pedmean1D[i].Fill(pedmap[i].GetBinContent(ix,iy)) 
+                    pedrms1D[i].Fill(pedmap[i].GetBinError(ix,iy)) 
+            pedmean1D[i].Write()
+            pedrms1D[i].Write()
         pedfile.Close()
         print("Pedestal calculated and saved into ",pedfilename)
+
+        del pedmapS,pedmap,pedmean1D,pedrms1D
+        gc.collect()
 
 
     def reconstruct(self,evrange=(-1,-1,-1)):
@@ -400,63 +426,53 @@ class analysis:
         flag_oxy=False              #Flag-check to see if oxygen variable exist
         env_varf = open('modules_config/env_variables.txt','r')
         env_var = eval(env_varf.read())
-        if self.options.rawdata_tier == 'root':
-            tf = sw.swift_read_root_file(self.tmpname)
-            keys = tf.keys()
-            mf = [0] # dummy array to make a common loop with MIDAS case
-        elif self.options.rawdata_tier == 'h5':
-            tf = sw.swift_read_h5_file(self.tmpname)
-            keys = tf.keys()
-            mf = [0] # dummy array to make a common loop with MIDAS case
 
-
-        elif self.options.rawdata_tier == 'midas':
-            run,tmpdir,tag = self.tmpname
-            mf = sw.swift_download_midas_file(run,tmpdir,tag)
-            
-            ## Necessary to read the ODB to retrieve some info necessary for the waveform analysis
-            ## Seems to repeat the opening process but *doesn't* slow down the code.
-            if self.options.pmt_mode == 1:        
-                
-                odb,corrected,channels_offsets,camera_exposure = utilities.get_odb_pmt_info(mf,self.options,run)
-
-            mf.jump_to_start()
-            dslow = pd.DataFrame()
-            if self.options.environment_variables:
+        run,tmpdir,tag = self.tmpname
+        mf = sw.swift_download_midas_file(run,tmpdir,tag)
         
-                odb = cy.get_bor_odb(mf)
-                
-                header_environment = odb.data['Equipment']['Environment']['Settings']['Names Input']
-                header_gas_system = odb.data['Equipment']['GasSystem']['Settings']['Names']
-                header_oxygen = header_gas_system[265]
-                if header_oxygen == env_var['oxygen']: 
-                    flag_oxy=True
-                else:
-                    header_oxygen = env_var['oxygen']
-                
-                value_variables = odb.data['Equipment']['Environment']['Variables']
-                value_gas_system = odb.data['Equipment']['GasSystem']['Variables']
-                value_oxygen = value_gas_system['Demand'][265]
-                if not flag_oxy:
-                    value_oxygen=-99
-                
-                doxygen = pd.DataFrame([value_oxygen], columns=[f"{header_oxygen}"])
-                dslow = pd.DataFrame(columns = header_environment)
-                dslow.loc[len(dslow)] = value_variables['Input']
-                dslow = pd.merge(dslow,doxygen,left_index=True,right_index=True)
+        ## Necessary to read the ODB to retrieve some info necessary for the waveform analysis
+        ## Seems to repeat the opening process but *doesn't* slow down the code.
+        if self.options.pmt_mode == 1:        
+            
+            odb,corrected,channels_offsets,camera_exposure = utilities.get_odb_pmt_info(mf,self.options,run)
 
-                for i in dslow.keys():
-                    dslow = utilities.conversion_env_variables(dslow, odb, env_var, i, j_env = 0)
-                   
-                try:
-                   self.autotree.fillEnvVariables(dslow.take([0]))
-                   if not self.options.camera_mode:
-                            self.outTree.fill()
-                except:
-                   print("WARNING: could not fill dslow variables.")   
-                #print(dslow)
+        mf.jump_to_start()
+        dslow = pd.DataFrame()
+        if self.options.environment_variables:
+    
+            odb = cy.get_bor_odb(mf)
+            
+            header_environment = odb.data['Equipment']['Environment']['Settings']['Names Input']
+            header_gas_system = odb.data['Equipment']['GasSystem']['Settings']['Names']
+            header_oxygen = header_gas_system[265]
+            if header_oxygen == env_var['oxygen']: 
+                flag_oxy=True
+            else:
+                header_oxygen = env_var['oxygen']
+            
+            value_variables = odb.data['Equipment']['Environment']['Variables']
+            value_gas_system = odb.data['Equipment']['GasSystem']['Variables']
+            value_oxygen = value_gas_system['Demand'][265]
+            if not flag_oxy:
+                value_oxygen=-99
+            
+            doxygen = pd.DataFrame([value_oxygen], columns=[f"{header_oxygen}"])
+            dslow = pd.DataFrame(columns = header_environment)
+            dslow.loc[len(dslow)] = value_variables['Input']
+            dslow = pd.merge(dslow,doxygen,left_index=True,right_index=True)
 
-                j_env = 1
+            for i in dslow.keys():
+                dslow = utilities.conversion_env_variables(dslow, odb, env_var, i, j_env = 0)
+                
+            try:
+                self.autotree.fillEnvVariables(dslow.take([0]))
+                if not self.options.camera_mode:
+                        self.outTree.fill()
+            except:
+                print("WARNING: could not fill dslow variables.")   
+            #print(dslow)
+
+            j_env = 1
 
         if self.options.save_MC_data:
             mc_variables = [
@@ -484,10 +500,48 @@ class analysis:
                 "MC_3D_pathlength": "track_length_3D",
             }
 
+        #Check number of CAM banks
+        morecam = False
+        fewercam = False
+        seenCAM0 = False
+        exitloop = False
+        countCAM = 0
+
+        mf.jump_to_start()
+        for mevent in mf:
+            if mevent.header.is_midas_internal_event():
+                continue
+            if exitloop:
+                break
+            keys = mevent.banks.keys()
+            #print(keys)
+            for iobj,key in enumerate(keys):
+                name=key
+                #print('name',name)
+                if name.startswith('CAM'):
+                    countCAM+=1
+                    if name == self.options.cambanknames[0]:
+                        if not seenCAM0:
+                            seenCAM0 = True
+                        else:
+                            if countCAM-1 > self.options.camera_number:
+                                morecam = True
+                            elif countCAM-1 < self.options.camera_number:
+                                fewercam = True
+                            exitloop = True
+                if morecam:
+                    print("Careful!\nThere are more cameras (%d) than foreseen, but you are analysing less for the pedestal!\n "%(countCAM-1))
+                if fewercam:
+                    print("Careful!\n There are less cameras (%d) than foreseen. Check again.\nAnalysis FAILED!\n"%(countCAM-1))
+                    sys.exit(1)
+
+
         numev = 0
         event=0
+        camera_n = 0
+
         camera_read = False         #only useful for midas read 
-        pmt_read = False            #only useful for midas read... FIX: is it fine to use only camera_read in the for of mevent but before keys loop? probably yes
+        pmt_read = False            #only useful for midas read
         if self.options.pmt_mode == 0:
             pmt_read = True
         
@@ -497,12 +551,13 @@ class analysis:
         timestamp = -1
         timestamp0 = 0
 
+        pedarr_fr_ith = None
+        noisearr_fr_ith = None
+
+        mf.jump_to_start()
         for mevent in mf:
-            if self.options.rawdata_tier == 'midas':
-                if mevent.header.is_midas_internal_event():
-                    continue
-                else:
-                    keys = mevent.banks.keys()
+            if mevent.header.is_midas_internal_event():
+                continue
 
             if camera_read and pmt_read:
                 numev +=1   
@@ -515,111 +570,97 @@ class analysis:
                     fails_count +=1
                     if fails_count==3:
                         print('\nCareful: you set the PMT analysis ON but no PMT bank was found. Are you sure PMT data is available for this run?\n ANALYSIS FAILED')
-                        sys.exit()
+                        sys.exit(1)
                     else:
                          exist_pmt = False
                          exist_cam = False   
             
-            if self.options.rawdata_tier == 'midas':
-                timestamp=mevent.header.timestamp
-
+            timestamp=mevent.header.timestamp
+            keys = mevent.banks.keys()
             for iobj,key in enumerate(keys):
                 name=key
                 camera = False
                 pmt = False
                 #print(name)
 
-                if self.options.rawdata_tier == 'root':
-                    if 'pic' in name:
-                        patt = re.compile('\S+run(\d+)_ev(\d+)')
-                        m = patt.match(name)
-                        run = int(m.group(1))
-                        event = int(m.group(2))
-                        img_fr = utilities.rootflip(tf,key,self.options.tag)     #necessary to uniform root raw data to midas. This is a vertical flip (raw data differ between ROOT and MIDAS formats)
-                        camera=True
+                run = int(self.options.run)
 
-                elif self.options.rawdata_tier == 'h5':
-                    if 'pic' in name:
-                        patt = re.compile('\S+run(\d+)_ev(\d+)')
-                        m = patt.match(name)
-                        run = int(m.group(1))
-                        event = int(m.group(2))
-                        img_fr = utilities.rootflip(tf,key,self.options.tag)                   #structure for h5 copied from ROOT as it was in the past. Unsure if it is correct
-                        camera=True
+                if name == 'TIME':
+                    timestamp0 = mevent.banks[key].data[0]
+                    #print(timestamp0,timestamp)
+                if timestamp<10000:             #10000 in seconds is 2h 46 min. This time should be larger than the run duration
+                    timestamp = timestamp0*1000 + timestamp
+                
+                if name.startswith('CAM'):
+                    exist_cam = True
+                    for ibank,bankname in enumerate(self.options.cambanknames):
+                        if name == bankname:
+                            if name == self.options.cambanknames[-1]:
+                                camera_read = True
+                            if options.camera_mode:
+                                img_fr,_,_ = cy.daq_cam2array(mevent.banks[key])
+                                camera_n = ibank
+                                pedarr_fr_ith = self.pedarr_fr[camera_n]
+                                noisearr_fr_ith = self.noisearr_fr[camera_n]
+                                camera=True
 
-                elif self.options.rawdata_tier == 'midas':
-                    run = int(self.options.run)
-
-                    if name == 'TIME':
-                        timestamp0 = mevent.banks[key].data[0]
-                        #print(timestamp0,timestamp)
-                    if timestamp<10000:             #10000 in seconds is 2h 46 min. This time should be larger than the run duration
-                        timestamp = timestamp0*1000 + timestamp
-                    
-                    if name.startswith('CAM'):
-                        camera_read = True
-                        exist_cam = True
-                        if options.camera_mode:
-                            img_fr,_,_ = cy.daq_cam2array(mevent.banks[key])
-                            camera=True
-
-                    elif name.startswith('MSRD') and self.options.environment_variables: 
-                        if mevent.header.event_id == 6:
-                            dslow = utilities.read_env_variables(mevent.banks[key], name, dslow, odb, env_var, j_env=j_env)
-                            if not flag_oxy:                            #check if not oxygen      
-                                dslow.iloc[-1, -1]=-99
-                            self.autotree.fillEnvVariables(dslow.take([j_env]))
-                            j_env = j_env + 1
-                            if not self.options.camera_mode:
-                                if self.options.jobs != 1:
-                                    if numev >= evrange[1]: 
-                                        self.outTree.fill()
-                                else:
+                elif name.startswith('MSRD') and self.options.environment_variables: 
+                    if mevent.header.event_id == 6:
+                        dslow = utilities.read_env_variables(mevent.banks[key], name, dslow, odb, env_var, j_env=j_env)
+                        if not flag_oxy:                            #check if not oxygen      
+                            dslow.iloc[-1, -1]=-99
+                        self.autotree.fillEnvVariables(dslow.take([j_env]))
+                        j_env = j_env + 1
+                        if not self.options.camera_mode:
+                            if self.options.jobs != 1:
+                                if numev >= evrange[1]: 
                                     self.outTree.fill()
-                    
-                    elif name.startswith('INPT') and self.options.environment_variables:
-                        if mevent.header.event_id == 5:
-                            dslow = utilities.read_env_variables(mevent.banks[key], name, dslow, odb, env_var, j_env=j_env)
-                            self.autotree.fillEnvVariables(dslow.take([j_env]))
-                            j_env = j_env + 1
-                            if not self.options.camera_mode:
-                                if self.options.jobs != 1:
-                                    if numev >= evrange[1]: 
-                                        self.outTree.fill()
-                                else:
+                            else:
+                                self.outTree.fill()
+                
+                elif name.startswith('INPT') and self.options.environment_variables:
+                    if mevent.header.event_id == 5:
+                        dslow = utilities.read_env_variables(mevent.banks[key], name, dslow, odb, env_var, j_env=j_env)
+                        self.autotree.fillEnvVariables(dslow.take([j_env]))
+                        j_env = j_env + 1
+                        if not self.options.camera_mode:
+                            if self.options.jobs != 1:
+                                if numev >= evrange[1]: 
                                     self.outTree.fill()
-                    
-                    elif name.startswith('DGH0'):
-                        pmt_read = True
-                        exist_pmt = True
-                        fast_digitizer = False
-                        slow_digitizer = False
-                        if self.options.pmt_mode:
-                            header=cy.daq_dgz_full2header(mevent.banks[key], verbose=False)
-                            # sample_rate = header.sampling_rate
+                            else:
+                                self.outTree.fill()
+                
+                elif name.startswith('DGH0'):
+                    pmt_read = True
+                    exist_pmt = True
+                    fast_digitizer = False
+                    slow_digitizer = False
+                    if self.options.pmt_mode:
+                        header=cy.daq_dgz_full2header(mevent.banks[key], verbose=False)
+                        # sample_rate = header.sampling_rate
 
-                            ## Care: if tag is MC$blabla, the tag for the digitizer will have to be changed to LNGS or something
-                            waveform_f, waveform_s = cy.daq_dgz_full2array(mevent.banks['DIG0'], header, verbose=False, corrected=corrected, ch_offset=channels_offsets,tag=self.options.tag)
+                        ## Care: if tag is MC$blabla, the tag for the digitizer will have to be changed to LNGS or something
+                        waveform_f, waveform_s = cy.daq_dgz_full2array(mevent.banks['DIG0'], header, verbose=False, corrected=corrected, ch_offset=channels_offsets,tag=self.options.tag)
 
-                            for idigi,digitizer in enumerate(header.boardNames):
+                        for idigi,digitizer in enumerate(header.boardNames):
 
-                                if str(digitizer) == '1742' and len(waveform_f):  
+                            if str(digitizer) == '1742' and len(waveform_f):  
 
-                                    fast_digitizer = True
-                                    nChannels_f  = header.nchannels[idigi]
-                                    nTriggers_f = len(header.TTT[idigi])
-                                    TTTs_f = header.TTT[idigi]
+                                fast_digitizer = True
+                                nChannels_f  = header.nchannels[idigi]
+                                nTriggers_f = len(header.TTT[idigi])
+                                TTTs_f = header.TTT[idigi]
 
-                                elif str(digitizer) == '1720' and len(waveform_s):
-                                    
-                                    slow_digitizer = True
-                                    nChannels_s  = header.nchannels[idigi]
-                                    nTriggers_s = len(header.TTT[idigi])
-                                    TTTs_s = header.TTT[idigi]
+                            elif str(digitizer) == '1720' and len(waveform_s):
+                                
+                                slow_digitizer = True
+                                nChannels_s  = header.nchannels[idigi]
+                                nTriggers_s = len(header.TTT[idigi])
+                                TTTs_s = header.TTT[idigi]
 
-                            pmt = True
+                        pmt = True
 
-                    event=numev
+                event=numev
 
                 justSkip = False
                 if event<evrange[1]: justSkip=True
@@ -631,7 +672,7 @@ class analysis:
 
                 if self.options.camera_mode:
                     if camera==True:
-                        print("Processing Run: ",run,"- Event ",event,"Camera...")
+                        print("Processing Run: ",run,"- Event ",event,"Camera",camera_n,"...")
                         self.outTree.fillBranch("run",run)
                         self.outTree.fillBranch("event",event)
                         self.outTree.fillBranch("pedestal_run", int(self.options.pedrun))
@@ -656,7 +697,7 @@ class analysis:
                         
                         # zs on full image + saturation correction on full image or skip it
                         t_pre0 = time.perf_counter()
-                        img_fr_sub = ctools.pedsub(img_cimax,self.pedarr_fr)
+                        img_fr_sub = ctools.pedsub(img_cimax,pedarr_fr_ith)
                         t_pre1 = time.perf_counter()
                         if self.options.saturation_corr:
                             #print("you are in saturation correction mode")
@@ -665,7 +706,7 @@ class analysis:
                             #print("you are in poor mode")
                             img_fr_satcor = img_fr_sub
                         t_pre2 = time.perf_counter()
-                        img_fr_zs  = ctools.zsfullres(img_fr_satcor,self.noisearr_fr,nsigma=self.options.nsigma)
+                        img_fr_zs  = ctools.zsfullres(img_fr_satcor,noisearr_fr_ith,nsigma=self.options.nsigma)
                         t_pre3 = time.perf_counter()
                         img_fr_zs_acc = ctools.acceptance(img_fr_zs,self.cg.ymin,self.cg.ymax,self.cg.xmin,self.cg.xmax)
                         t_pre4 = time.perf_counter()
@@ -692,7 +733,7 @@ class analysis:
                         t_DBSCAN_2 = time.perf_counter()
                         if self.options.debug_mode == 1:
                             print(f"1. DBSCAN run + variables calculation in {t_DBSCAN_2 - t_DBSCAN_1:0.4f} seconds")
-                        self.autotree.fillCameraVariables(img_fr_zs,timestamp)
+                        self.autotree.fillCameraVariables(img_fr_zs,timestamp,camera_n)
                         t_DBSCAN_3 = time.perf_counter()
                         if self.options.debug_mode == 1:
                             print(f"fillCameraVariables in {t_DBSCAN_3 - t_DBSCAN_2:0.4f} seconds")
@@ -701,7 +742,6 @@ class analysis:
                         self.autotree.fillTimeCameraVariables(t_variables, t_DBSCAN, lp_len, t_pedsub, t_saturation, t_zerosup, t_xycut, t_rebin, t_medianfilter, t_noisered)
                         if self.options.debug_mode == 1:
                             print(f"fillClusterVariables in {t_DBSCAN_4 - t_DBSCAN_3:0.04f} seconds")
-                            print()
                         del img_fr_sub,img_fr_satcor,img_fr_zs,img_fr_zs_acc,img_rb_zs
                         self.outTree.fill()
                         del img_fr
@@ -908,6 +948,14 @@ if __name__ == '__main__':
     for k,v in params.items():
         setattr(options,k,v)
 
+    if options.rawdata_tier != 'midas':
+        print('In this version only midas files can be reconstructed. Set the correct flag in the configfile')
+        sys.exit(0)
+
+    options.cambanknames = []
+    for i in range(0,options.camera_number):
+        options.cambanknames.append('CAM'+str(i))
+
     run = int(options.run)
     
     if options.debug_mode == 1:
@@ -933,24 +981,12 @@ if __name__ == '__main__':
     os.system('mkdir -p {tmpdir}/{user}'.format(tmpdir=tmpdir,user=USER))
     tmpdir = '{tmpdir}/{user}/'.format(tmpdir=tmpdir,user=USER) if not options.tmpdir else options.tmpdir+"/"
     if sw.checkfiletmp(int(options.run),options.rawdata_tier,tmpdir):
-        if options.rawdata_tier=='root':
-            prefix = 'histograms_Run'
-            postfix = 'root'
-        elif options.rawdata_tier=='h5':
-            prefix = 'histograms_Run'
-            postfix = 'h5'
-        else:
-            prefix = 'run'
-            postfix = 'mid.gz'
+        prefix = 'run'
+        postfix = 'mid.gz'
         options.tmpname = "%s/%s%05d.%s" % (tmpdir,prefix,int(options.run),postfix)
     
     else:
-        if options.rawdata_tier == 'root':
-            file_url = sw.swift_root_file(options.tag, int(options.run))
-            print ('Downloading file: ' + file_url)
-            options.tmpname = sw.swift_download_root_file(file_url,int(options.run),tmpdir)
-        else:
-            print ('Downloading MIDAS.gz file for run ' + options.run)
+        print ('Downloading MIDAS.gz file for run ' + options.run)
     # in case of MIDAS, download function checks the existence and in case it is absent, downloads it. If present, opens it
     if options.rawdata_tier == 'midas':
         ## need to open it (and create the midas object) in the function, otherwise the async run when multithreaded will confuse events in the two threads

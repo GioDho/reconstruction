@@ -1,0 +1,11 @@
+{
+# CYGNO-04
+'name'        : 'cygno04',
+'pixelwidth'  : 0.152,  # mm
+'cameratype'       : 'Quest',
+'vignette'    : 'data/vignette_QEHD_085.root',
+'xmin'        : 0,
+'xmax'        : 4096,
+'ymin'        : 0,
+'ymax'        : 2304,
+}
