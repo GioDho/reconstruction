@@ -575,7 +575,6 @@ class analysis:
                 if name.startswith('CAM'):
                     for ibank,bankname in enumerate(self.options.cambanknames):
                         if name == bankname:
-                            if name == self.options.cambanknames[-1]:
                             if options.camera_mode:
                                 img_fr,_,_ = cy.daq_cam2array(mevent.banks[key])
                                 camera_n = ibank
