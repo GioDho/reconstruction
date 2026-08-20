@@ -67,12 +67,18 @@ class analysis:
                 ctools = cameraTools(self.cg)
                 # then the full resolution one
                 pedrf_fr = uproot.open(self.pedfile_fullres_name)
-                self.pedarr_fr = []   
-                for i in range(0,self.options.camera_number):        
-                    self.pedarr_fr.append(pedrf_fr['pedmap_'+str(i)].values().T)
-                self.noisearr_fr = []
-                for i in range(0,self.options.camera_number):        
-                    self.noisearr_fr.append(pedrf_fr['pedmap_'+str(i)].errors().T)
+                self.pedarr_fr = []
+                try:
+                    for i in range(0,self.options.camera_number):        
+                        self.pedarr_fr.append(pedrf_fr['pedmap_'+str(i)].values().T)
+                    self.noisearr_fr = []
+                    for i in range(0,self.options.camera_number):        
+                        self.noisearr_fr.append(pedrf_fr['pedmap_'+str(i)].errors().T)
+                except Exception as e:
+                    print(e)
+                    print('You probably set more cameras to analyse than the pedestals available')
+                    sys.exit(1)
+
                 if options.vignetteCorr:
                     self.vignmap = ctools.loadVignettingMap()
                 else:
@@ -503,51 +509,40 @@ class analysis:
         #Check number of CAM banks
         morecam = False
         fewercam = False
-        seenCAM0 = False
-        exitloop = False
         countCAM = 0
+        count_pmt = 0
 
         mf.jump_to_start()
         for mevent in mf:
             if mevent.header.is_midas_internal_event():
                 continue
-            if exitloop:
-                break
-            keys = mevent.banks.keys()
-            #print(keys)
-            for iobj,key in enumerate(keys):
-                name=key
-                #print('name',name)
-                if name.startswith('CAM'):
-                    countCAM+=1
-                    if name == self.options.cambanknames[0]:
-                        if not seenCAM0:
-                            seenCAM0 = True
-                        else:
-                            if countCAM-1 > self.options.camera_number:
-                                morecam = True
-                            elif countCAM-1 < self.options.camera_number:
-                                fewercam = True
-                            exitloop = True
-                if morecam:
-                    print("Careful!\nThere are more cameras (%d) than foreseen, but you are analysing less for the pedestal!\n "%(countCAM-1))
-                if fewercam:
-                    print("Careful!\n There are less cameras (%d) than foreseen. Check again.\nAnalysis FAILED!\n"%(countCAM-1))
+            if mevent.header.event_id==1:
+                keys = list(mevent.banks.keys())
+                countCAM = sum("CAM" in s for s in keys)
+                if countCAM > self.options.camera_number:
+                    morecam = True
+                elif countCAM < self.options.camera_number:
+                    fewercam = True
+                #Check if PMT is in the banks if you wanto to analyze it
+                if self.options.pmt_mode > 0:   
+                   count_pmt = sum("DGH0" in s for s in keys)
+                   if count_pmt == 0:
+                    print('\nCareful: you set the PMT analysis ON but no PMT bank was found. Are you sure PMT data is available for this run?\n ANALYSIS FAILED')
                     sys.exit(1)
+                break
+
+        if morecam:
+            print("Careful!\nThere are more cameras (%d) than foreseen, but you are analysing less!\n "%(countCAM))
+        if fewercam:
+            print("Careful!\n There are less cameras (%d) than foreseen. Check again.\nAnalysis FAILED!\n"%(countCAM))
+
+
 
 
         numev = 0
         event=0
         camera_n = 0
 
-        camera_read = False         #only useful for midas read 
-        pmt_read = False            #only useful for midas read
-        if self.options.pmt_mode == 0:
-            pmt_read = True
-        
-        exist_pmt = False
-        exist_cam = False
-        fails_count = 0
         timestamp = -1
         timestamp0 = 0
 
@@ -559,22 +554,8 @@ class analysis:
             if mevent.header.is_midas_internal_event():
                 continue
 
-            if camera_read and pmt_read:
-                numev +=1   
-            camera_read = False         #only useful for midas read 
-            pmt_read = False            #only useful for midas read
-            if self.options.pmt_mode == 0:
-                pmt_read = True
-            else:
-                if exist_cam and not exist_pmt:
-                    fails_count +=1
-                    if fails_count==3:
-                        print('\nCareful: you set the PMT analysis ON but no PMT bank was found. Are you sure PMT data is available for this run?\n ANALYSIS FAILED')
-                        sys.exit(1)
-                    else:
-                         exist_pmt = False
-                         exist_cam = False   
-            
+            if mevent.header.event_id==1:
+                numev = int(mevent.header.serial_number)
             timestamp=mevent.header.timestamp
             keys = mevent.banks.keys()
             for iobj,key in enumerate(keys):
@@ -592,11 +573,9 @@ class analysis:
                     timestamp = timestamp0*1000 + timestamp
                 
                 if name.startswith('CAM'):
-                    exist_cam = True
                     for ibank,bankname in enumerate(self.options.cambanknames):
                         if name == bankname:
                             if name == self.options.cambanknames[-1]:
-                                camera_read = True
                             if options.camera_mode:
                                 img_fr,_,_ = cy.daq_cam2array(mevent.banks[key])
                                 camera_n = ibank
@@ -631,8 +610,6 @@ class analysis:
                                 self.outTree.fill()
                 
                 elif name.startswith('DGH0'):
-                    pmt_read = True
-                    exist_pmt = True
                     fast_digitizer = False
                     slow_digitizer = False
                     if self.options.pmt_mode:
