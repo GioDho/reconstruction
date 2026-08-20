@@ -543,11 +543,6 @@ class analysis:
         event=0
         camera_n = 0
 
-        camera_read = False         #only useful for midas read 
-        pmt_read = False            #only useful for midas read
-        if self.options.pmt_mode == 0:
-            pmt_read = True
-        
         timestamp = -1
         timestamp0 = 0
 
@@ -559,13 +554,8 @@ class analysis:
             if mevent.header.is_midas_internal_event():
                 continue
 
-            if camera_read and pmt_read:
-                numev +=1   
-            camera_read = False         #only useful for midas read 
-            pmt_read = False            #only useful for midas read
-            if self.options.pmt_mode == 0:
-                pmt_read = True  
-            
+            if mevent.header.event_id==1:
+                numev = int(mevent.header.serial_number)
             timestamp=mevent.header.timestamp
             keys = mevent.banks.keys()
             for iobj,key in enumerate(keys):
@@ -586,7 +576,6 @@ class analysis:
                     for ibank,bankname in enumerate(self.options.cambanknames):
                         if name == bankname:
                             if name == self.options.cambanknames[-1]:
-                                camera_read = True
                             if options.camera_mode:
                                 img_fr,_,_ = cy.daq_cam2array(mevent.banks[key])
                                 camera_n = ibank
@@ -621,7 +610,6 @@ class analysis:
                                 self.outTree.fill()
                 
                 elif name.startswith('DGH0'):
-                    pmt_read = True
                     fast_digitizer = False
                     slow_digitizer = False
                     if self.options.pmt_mode:
