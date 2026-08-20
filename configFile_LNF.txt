@@ -6,8 +6,8 @@
 'geometry'  : 'gin',
 
 # DEBUG plots
-'debug_mode'            : 0,
-'ev'                    : 10,
+'debug_mode'            : 1,
+'ev'                    : 7,
 'nclu'                  : -1,        # -1
 
 # Plots that will be made if debug_mode = 1
@@ -21,6 +21,7 @@
 'pkl_ext'		: 0,
 
 'camera_mode'            : 1,
+'camera_number'			 : 1,
 
 # Parameters of the plots
 'cmapcolor'             : 'gray',
@@ -38,7 +39,7 @@
 'daq'                   : 'midas',                 # DAQ type (btf/h5/midas)
 'tag'                   : 'LNF',                  # 'LNGS' for LIME LNGS experimental data, 'LNF' for all data taken at LNF, 'MAN' for all data taken at LNGS MANGO, 'MC$path_to_histogram.root' for MC. 
 						   # An example for MC tag could be (see configFile_MC.txt) 'MC$digitized/LIME_08_keV_Sat_NewCode_Iso_RandZ' (do not include the bucket nor the file name) 
-'vignetteCorr'          : True,                    # apply vignetting correction (correction maps in data/ according to the geometry)
+'vignetteCorr'          : False,                    # apply vignetting correction (correction maps in data/ according to the geometry)
 'environment_variables' : False,                    # if True the environment variables are added to the Tree
 
 'excImages'             : [0], #list(range(5))+[],      # To exlude some images of the analysis. Always exclude the first 5 which are messy (not true anymore)

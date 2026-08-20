@@ -167,6 +167,7 @@ class AutoFillTreeProducer:
         self.outTree.branch('cmos_mean',     'F', title="average counts of the full CMOS sensor")
         self.outTree.branch('cmos_rms',      'F', title="RMS of the counts of the full CMOS sensor")
         self.outTree.branch('timestamp',      'L', title="Timestamp in UTC of the picture")
+        self.outTree.branch('cam',      'I', title="Camera number")
 
     def createTimeCameraVariables(self):
         self.outTree.branch('t_DBSCAN', 'F', title="DBSCAN time")
@@ -234,11 +235,12 @@ class AutoFillTreeProducer:
         self.outTree.branch('{name}_lchi2'.format(name=name),        'F', lenVar=sizeStr, title="chi-squared of the Gaussian fit to the longitudinal profile")
         self.outTree.branch('{name}_lstatus'.format(name=name),      'F', lenVar=sizeStr, title="status of the Gaussian fit to the longitudinal profile")
 
-    def fillCameraVariables(self,pic,timestamp):
+    def fillCameraVariables(self,pic,timestamp,camera_n):
         self.outTree.fillBranch('cmos_integral',np.sum(pic))
         self.outTree.fillBranch('cmos_mean',np.mean(pic))
         self.outTree.fillBranch('cmos_rms',np.std(pic))
         self.outTree.fillBranch('timestamp',timestamp)
+        self.outTree.fillBranch('cam',camera_n)
 
     def fillTimeCameraVariables(self, t_variables, t_DBSCAN, lp, t_pedsub, t_saturation, t_zerosup, t_xycut, t_rebin, t_medianfilter, t_noisered):
         self.outTree.fillBranch('t_DBSCAN', t_DBSCAN)

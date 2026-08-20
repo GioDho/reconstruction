@@ -3,11 +3,11 @@
 'rawdata_tier' : 'root',
 
 # DETECTOR
-'geometry'  : 'lime',
+'geometry'  : 'gin',
 
 # DEBUG plots
-'debug_mode'            : 0,
-'ev'                    : 10,
+'debug_mode'            : 1,
+'ev'                    : 1,
 'nclu'                  : -1,        # -1
 
 # Plots that will be made if debug_mode = 1
@@ -21,6 +21,7 @@
 'pkl_ext'		: 0,
 
 'camera_mode'            : 1,
+'camera_number'			 : 1,
 
 # Parameters of the plots
 'cmapcolor'             : 'gray',
@@ -31,8 +32,8 @@
 
 'offline'               : False,		#if False it reads the logbook from online, if true it reads the runlog_tag_auto.csv locally
 'rebin'                 : 4,
-'nsigma'                : 0.6,
-'min_neighbors_average' : 1.2,                   # cut on the minimum average energy around a pixel (remove isolated macro-pixels)
+'nsigma'                : 0.3,
+'min_neighbors_average' : 1.05,                   # cut on the minimum average energy around a pixel (remove isolated macro-pixels)
 'cimax'                 : 5000,                    # Upper threshold (keep very high not to kill large signals)
 'justPedestal'          : False,
 'daq'                   : 'midas',                 # DAQ type (btf/h5/midas)
